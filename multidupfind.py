@@ -20,7 +20,7 @@ import os
 import multiprocessing
 import hashlib
 import time
-import pdfrw
+import PyPDF4
 
 '''
 make a dictonary {path:size} for every file in the file tree
@@ -163,15 +163,14 @@ copies the unique files form /CLONE/ to /AWG/ This is too slow for big files use
 
 def CopyUnique(final,out_path,PATH):
     new=[]
-    outFile=open(out_path+'/FILTERED.txt','w',encoding='utf-8')
     for file in final:
-        new.append(file.replace('/','_'))
-        new = new[len(PATH):]
-        n=0
-        for i in new: 
-            os.system('cp "%s" "%s"' % (final[n], out_path+new[n]))
-            outFile.write(final[n]+'\n')
-            n+=1
+        file = file[len(PATH):]
+        new.append(file.replace('/','_'))          
+    n=0
+    for i in new: 
+        os.system('cp "%s" "%s"' % (final[n], out_path+new[n]))
+        n+=1
+
 '''
 filters the list by file extension 
 if it is a pdf file it checks to see if it is a govt form by checking for an OMB number in the metadata and skips it
@@ -185,13 +184,51 @@ def FilterbyType(final,docs):
         for lines in final: 
            if lines.find('.')!= -1:
               if lines.rsplit(sep='.', maxsplit=1)[1] ==i:
-                  if i =='pdf' or 'PDF':
-                      test= pdfrw.PdfReader(lines)
-                      if test.Info.OMB_number == None and test.Info.Author!= '(LOGSA)':
-                        docfiles.append(lines)  
-                  else:
-                      docfiles.append(lines)
+                  docfiles.append(lines)                    
     return docfiles
+
+'''
+Pass this function a list of pdf file full paths it will check the metadata of each and remove those that meet the conditions below
+author is APD or LOGSA, pdf printed form a website of iphone, any copies of the GPC request form.
+'''
+def PDFgetMeta(x):
+    docfiles={}
+    for i in x:
+        doc=PyPDF4.PdfFileReader(i,strict=False)
+        docfiles.update({i:doc})
+    return docfiles
+ 
+def FilterPDF(docfiles):
+    x=docfiles.keys()
+    for i in x:
+        if docfiles[x[i]].getDocumentInfo['/Author'] == 'APD' or '(LOGSA)':
+            del [x[i]]
+        elif docfiles[x[i]].getDocumentInfo['/Pruducer'] == 'HP Digital Sending Device' or 'Microsoft: Print To PDF' or'iText 2.1.2 (by loagie.com)':
+            del [x[i]]
+        elif docfiles[x[i]].getDocumentInfo['/Title'] == 'AWG GPC Request Form':
+            del [x[i]]
+    return x
+
+
+def MultiPdfFilter(final, cores):
+    out_q= multiprocessing.Queue()
+    procs=[]
+    start_time=time.time()
+    for i in range(cores):
+        p= multiprocessing.Process(target=PDFgetMeta, args=(list(workChunks(cores,final)[i])))
+        procs.append(p)
+        print('core number %s starting...%s chunk size' % (i, len(workChunks(cores,final)[i])))
+        p.start() 
+    results=[]
+    for i in range(cores):
+        results.append(out_q.get())
+    for p in procs:
+        print('core number %s  joining reuslt...%s' % (p, time.time()-start_time))
+        p.join()
+
+
+
+
 def Multicopy(out_path,cores,final,path):
     procs=[]
     chunks=workChunks(cores,final)
@@ -200,7 +237,7 @@ def Multicopy(out_path,cores,final,path):
         procs.append(p)
         print('core number %s starting...%s chunk size' % (i, len(chunks[i])))
         p.start()       
-      
+   
 if __name__ == "__main__":
     PATH='/mnt/CLONE/'  
     OUT_PATH='/mnt/AWG/'
@@ -208,12 +245,15 @@ if __name__ == "__main__":
     documents= ['pdf','PDF','docx','DOCX','doc','DOC','ppt','PPT','pptx','PPTX','xlsx','XLSX','xls','XLS','txt','TXT','rtf,','RTF','msg','MSG','pst','PST','zip']
     pictures= ['MOV','mov','JPG','jpg','png','PNG','jpeg','JPEG','tif','TIF','tiff','TIFF','mp3','MP3','mp4','MP4','gif','GIF']
     #put the list of file extentions below commons lists provided above lists are concatenate in with + to add more files of type .new add +['new','NEW']
-    DOCS= documents+pictures
+    DOCS= documents
+    
+    
+  
     RESULT = multiCore(PATH, CORES) 
     FINAL=printResults(RESULT,OUT_PATH,PATH)
     FILTERED=FilterbyType(FINAL,DOCS)
-    Multicopy(OUT_PATH,CORES,FILTERED.PATH)
-  
+    Multicopy(OUT_PATH,CORES,FILTERED,PATH)
+
 
 
 
